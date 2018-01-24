@@ -10,3 +10,7 @@ Complie Instruction
 --
     gcc qbr.c -o qbr -lpthread -ljson
     gcc qbr_s.c -o qbr_s -lpthread -ljson
+
+Run
+--
+    ./qbr
