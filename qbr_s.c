@@ -5,6 +5,8 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/times.h> 
+#include <sys/select.h>
 #include <sys/stat.h> 
 #include <netinet/in.h>
 #include <unistd.h>
@@ -42,11 +44,11 @@ void sendBytes(int clientSocket, int length)
 void recvok(char* small_buff, int json_ok)
 {
 	struct json_object *jobj = json_tokener_parse(small_buff);
-    json_object_object_foreach(jobj, key, val) {
-        if (strcmp(key, "acknowledgement") == 0) {
-            json_ok  = json_object_get_int(val);
-        }
-    }
+    	json_object_object_foreach(jobj, key, val) {
+        	if (strcmp(key, "acknowledgement") == 0) {
+           		json_ok  = json_object_get_int(val);
+        	}
+    	}
 }
 
 void *recvthread(void *arg)
@@ -55,7 +57,6 @@ void *recvthread(void *arg)
      recv_para = (struct mypara *)arg;
      int _client = (*recv_para).clientSocket;// *((int *)client);
      bool run = true;
-     bool start = true;
      char small_buff[1024];
      int T = 0;
      int i = 0;
@@ -65,82 +66,99 @@ void *recvthread(void *arg)
      int json_ok = 0;
      char* f;
      f = (char *)malloc(200);
-     char* fn;
-     fn = (char *)malloc(200);
-     char* init;
-     init = (char *)malloc(200);
      const char *imei = (*recv_para).imei;
-     sprintf(init, "./img/%s_0.jpg", imei);
+     fd_set readfd;
      sleep(10);
-     while(start){
-         if((access(init,0))!= -1){	
-    	    while(run){
-		        sprintf(f, "./img/%s_%d.jpg", imei, num);
-		        sprintf(fn, "./img/%s_%d.jpg", imei, num+1);
-		            if((access(fn,0))!= -1){
-			            i = 0;
-			            struct stat statbuf;  
-    		            stat(f,&statbuf);  
-    		            int size=statbuf.st_size; 
-			            sendBytes(_client, size);
-                        printf("%d\n",num);
-        	            if((num_bytes = read(_client, small_buff, 1024))<= 0){
-             		        printf("No ok received\n");
-             		        run = false;
-             		        break;
-         	            }   
-		                recvok(small_buff, json_ok);
-			            FILE *fp = fopen(f, "rb");
-                        char buffer[BUFFER_SIZE];
-			            int file_block_length = 0;
-  			            while( (file_block_length = fread(buffer, sizeof(char), BUFFER_SIZE, fp)) > 0){
-				            if (send(_client, buffer, file_block_length, 0) < 0){
-					            printf("Send File Failed!\n");  
+     while(run){
+	sprintf(f, "./img/%s_%d.jpg", imei, num);
+	if((access(f,0))!= -1){
+		i = 0;
+		struct stat statbuf;  
+    		stat(f,&statbuf);  
+    		int size=statbuf.st_size; 
+		sendBytes(_client, size);
+                printf("SEND: %d\n",num);
+		struct timeval timeout;
+         	timeout.tv_sec= 6;
+                timeout.tv_usec= 0;
+                FD_ZERO(&readfd);
+                FD_SET(_client, &readfd);
+                switch (select(_client + 1, &readfd, NULL, NULL, &timeout)) {
+             		case -1:
+             		{ run = false;}
+             		break;
+
+             		case 0:
+             		{ run = false;}
+             		break;
+
+             		default:
+			if(FD_ISSET(_client, &readfd)){
+        	            	if((num_bytes = read(_client, small_buff, 1024))<= 0){
+             		        	printf("No ok received\n");
+             		       	 	run = false;
+             		        	break;
+         	            	} 
+			}
+		 }  
+		 recvok(small_buff, json_ok);
+	         FILE *fp = fopen(f, "rb");
+                 char buffer[BUFFER_SIZE];
+		 int file_block_length = 0;
+  		 while( (file_block_length = fread(buffer, sizeof(char), BUFFER_SIZE, fp)) > 0){
+			if (send(_client, buffer, file_block_length, 0) < 0){
+				printf("Send File Failed!\n");  
                                 break;  
-				            }
-				            bzero(buffer, sizeof(buffer));
-			            }   
-			            fclose(fp);
-        	            if((num_bytes = read(_client, small_buff, 1024))<= 0){
-             		        printf("No ok received\n");
-             		        run = false;
-             		        break;
-         	            }
-		                recvok(small_buff, json_ok);
-                        memset(f,0,200);
-			            memset(fn,0,200);
-                        num++;
-		            }else{
-			            i++;
-		            }
-		            if(i>N){
-			            run = false;
-                        start = false;
-			            break;
-		            }
-	        }
-     	    struct tm *t;  
-     	    time_t tt;  
-     	    time_t ts;          
-     	    time(&tt);  
-     	    t = localtime(&tt);
-     	    char *m_qbr;
-     	    m_qbr=malloc(200);
-     	    sprintf(m_qbr,"./mv_qbr.sh %s %4d%02d%02d_%02d:%02d:%02d_%s",imei,t->tm_year+1900,t->tm_mon+1,t->tm_mday,t->tm_hour,t->tm_min,t->tm_sec,imei);
-     	    system(m_qbr);
-            start = false;
-     	    break;
-        }else{
-	        T++;
-        }
-        if(T>20000000){
-	        start = false;
-	        break;
-        }
+			}
+		        bzero(buffer, sizeof(buffer));
+		 }   
+	         fclose(fp);
+	         struct timeval timeout1;
+	         timeout1.tv_sec= 6;
+	         timeout1.tv_usec= 0;
+	         FD_ZERO(&readfd);
+	         FD_SET(_client, &readfd);
+		 switch (select(_client + 1, &readfd, NULL, NULL, &timeout1)) {
+             		case -1:
+             		{ run = false;}
+             		break;
+
+             		case 0:
+             		{ run = false;}
+             		break;
+
+             		default:
+			if(FD_ISSET(_client, &readfd)){
+        	        	if((num_bytes = read(_client, small_buff, 1024))<= 0){
+             		        	printf("No ok received\n");
+             		        	run = false;
+             		        	break;
+         	            	}
+			}
+		 }
+		 recvok(small_buff, json_ok);
+                 memset(f,0,200);
+                 num++;
+	}else{
+		 i++;
+	}
+        if(i>N){
+		run = false;
+		break;
+	}
     }
-     close(_client);
+    struct tm *t;  
+    time_t tt;  
+    time_t ts;          
+    time(&tt);  
+    t = localtime(&tt);
+    char *m_qbr;
+    m_qbr=malloc(200);
+    sprintf(m_qbr,"./mv_qbr.sh %s %4d%02d%02d_%02d:%02d:%02d_%s",imei,t->tm_year+1900,t->tm_mon+1,t->tm_mday,t->tm_hour,t->tm_min,t->tm_sec,imei);
+    system(m_qbr);
+    close(_client);
   //   pthread_exit(0);
-     return 0;
+    return 0;
 }
 
 int main(int argc, char **argv)

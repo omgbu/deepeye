@@ -3,8 +3,11 @@
 #include <stdbool.h>
 #include <time.h>
 #include <string.h>
+#include <errno.h>  
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/times.h> 
+#include <sys/select.h> 
 #include <netinet/in.h>
 #include <unistd.h> 
 #include <pthread.h>
@@ -58,6 +61,14 @@ void write_log(char *log)
     }  
 }  
 
+void *sendthread(void *arg)
+{
+     char *qbr_s;
+     qbr_s=malloc(200);
+     strcpy(qbr_s,"./qbr_s");
+     system(qbr_s);
+}
+
 void *procthread(void *arg)
 {
      struct mypara *recv_para;
@@ -81,17 +92,41 @@ void *recvthread(void *arg)
      int num_bytes;
      int bytes = 0;
      const char *gps;
-     char* n;
-     n=(char *)malloc(200);
+     char* temp;
+     temp=(char *)malloc(200);
+     char* name;
+     name=(char *)malloc(200);
      const char *imei = (*recv_para).imei;
+     fd_set readfd;
+     sleep(10);
      while(run){
-         if((num_bytes = read(_client, small_buff, 1024))<= 0){
-             printf("No byte received\n");
-             run = false;
-             break;
-         }
+         struct timeval timeout;
+         timeout.tv_sec= 5;
+         timeout.tv_usec= 0;
+         FD_ZERO(&readfd);
+         FD_SET(_client, &readfd);
+         switch (select(_client + 1, &readfd, NULL, NULL, &timeout)) {
+            case -1:
+            { run = false;}
+            break;
+
+            case 0:
+            { run = false;}
+            break;
+
+            default:
+            if(FD_ISSET(_client, &readfd)){            
+         	printf("RECV: %d\n",num);
+         	if(((num_bytes = read(_client, small_buff, 1024))<= 0)){
+             		printf("No byte received\n");
+             		run = false;
+             		break;
+         	}
+	    }
+            break;
+	 }
          struct json_object *jobj = json_tokener_parse(small_buff);
-	     int request = -1;
+	 int request = -1;
          json_object_object_foreach(jobj, key, val){
              if(strcmp(key, "request")==0){
                  request = json_object_get_int(val);
@@ -106,30 +141,58 @@ void *recvthread(void *arg)
          write_log(log);
          switch (request) {
              case JSON_REQUEST_STREAMING:
-             { sendAcknowledgement(_client, JSON_VALUE_OK);
-                 json_object_object_foreach(jobj, key, val) {
-                     if (strcmp(key, "bytes") == 0) {
-                         bytes = json_object_get_int(val);
-                     }
+             {
+             sendAcknowledgement(_client, JSON_VALUE_OK);
+             json_object_object_foreach(jobj, key, val) {
+                if (strcmp(key, "bytes") == 0) {
+                    bytes = json_object_get_int(val);
+                }
              }
-             sprintf(n, "./images/%s_%d.jpg", imei, num);
-             FILE *fp = fopen(n, "w");
+             sprintf(temp, "./images/temp_%d.jpg", num);
              char buffer[BUFFER_SIZE];
              int offset = 0, length = 0;
-             while((length = read(_client, buffer, BUFFER_SIZE))>0)
-             {
-                 int write_length = fwrite(buffer, sizeof(char), length, fp);
-                 offset += length;
-                 if (offset >= bytes) {
-                     break;
-                 }
-                 bzero(buffer, BUFFER_SIZE);  
+             struct timeval timeout1;
+             timeout1.tv_sec= 5;
+             timeout1.tv_usec= 0;
+             FD_ZERO(&readfd);
+             FD_SET(_client, &readfd);
+             switch (select(_client + 1, &readfd, NULL, NULL, &timeout1)) {
+             	case -1:
+             	{ run = false;}
+             	break;
 
-             }
-             fclose(fp);
-             memset(n,0,200);
+             	case 0:
+             	{ run = false;}
+             	break;
+
+             	default:
+             	if(FD_ISSET(_client, &readfd)){
+             		FILE *fp = fopen(temp, "w");
+             		while((length = read(_client, buffer, BUFFER_SIZE))>0){
+				int write_length = fwrite(buffer, sizeof(char), length, fp);
+                		offset += length;
+                		if (offset >= bytes){
+                     			break;
+                		}
+                		if (write_length < length){  
+                    			printf("File:\t Write Failed!\n");  
+                    			break;  
+                		}
+                 		bzero(buffer, BUFFER_SIZE);  
+             		}	
+             		fclose(fp);
+	     		sprintf(name, "./images/%s_%d.jpg", imei, num);
+	     		if(rename(temp, name)<0){
+				printf("File:\t Rename Failed!\n");
+	     		}
+	     		memset(temp,0,200);
+             		memset(name,0,200);
+		}
+             	break;
+	     }
              num++;
-             sendAcknowledgement(_client, JSON_VALUE_OK);}
+             sendAcknowledgement(_client, JSON_VALUE_OK);
+             }
              break;
 
              case JSON_REQUEST_DISCONNECT:
@@ -158,6 +221,12 @@ void *recvthread(void *arg)
 
 int main(int argc, char **argv)
 {
+  // system("./qbr_s");
+   pthread_t _thread;
+   if((pthread_create(&_thread,NULL,sendthread,NULL))!= 0){
+	printf("Can't create thread\n");
+	return 0;
+   }
    static const int PORT_NUM = 1050;
    struct sockaddr_in6 serv_addr;
    int mSocketFD = 0;
@@ -174,7 +243,7 @@ int main(int argc, char **argv)
            socklen_t client;
            struct sockaddr_in6 cli_addr;
            struct mypara para;
-	       pthread_t _thread;
+	   pthread_t _thread;
            pthread_t _thread1;
            char small_buff[1024];
            int num_bytes;
@@ -192,7 +261,7 @@ int main(int argc, char **argv)
                     para.imei = json_object_get_string(val);
                 }
            }
-	       if((pthread_create(&_thread,NULL,recvthread,&(para)))!= 0){
+	   if((pthread_create(&_thread,NULL,recvthread,&(para)))!= 0){
                     printf("Can't create thread\n");
 	   	            return 0;
            }
