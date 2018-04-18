@@ -148,7 +148,7 @@ void *recvthread(void *arg)
                     bytes = json_object_get_int(val);
                 }
              }
-             sprintf(temp, "./images/temp_%d.jpg", num);
+             sprintf(temp, "./images/temp_%s_%d.jpg", imei, num);
              char buffer[BUFFER_SIZE];
              int offset = 0, length = 0;
              struct timeval timeout1;
